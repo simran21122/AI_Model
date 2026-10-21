@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>VectorDB — HNSW + RAG</title>
+<title>VectorDB Studio — Semantic Search & RAG</title>
+<link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -155,12 +156,46 @@ button {
 ::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── STUDIO UI POLISH ── */
+:root{--bg:#080d18;--card:#0d1524;--border:#1d2a3d;--cs:#55d6be;--math:#a5b4fc;--food:#f6bd60;--sports:#73d2de;--accent:#7c8cff;--text:#e6edf7;--muted:#8290a7;--red:#ff7f8a;--green:#65d6a6}
+body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;background:radial-gradient(ellipse at 45% -25%,#17253c 0%,var(--bg) 55%);}
+header{min-height:62px;padding:14px 22px;background:rgba(13,21,36,.96);border-bottom:1px solid var(--border);gap:10px}
+header h1{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-size:16px;letter-spacing:-.3px;font-weight:750;background:linear-gradient(100deg,#f3f7ff,#8ea0ff 80%);-webkit-background-clip:text;background-clip:text}
+.badge{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-size:10px;padding:4px 9px;border-radius:999px;letter-spacing:.4px;background:#101b2c;color:#aab7cc;border-color:#26344a}
+.badge.hl{color:#aeb8ff;background:#1b2341;border-color:#404e8a}.badge.ok{color:#70e0b0}.badge.err{color:#ff9da5}
+#statsLabel{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#91a0b6}
+.left-panel,.right-panel{background:rgba(13,21,36,.95);border-color:var(--border)}
+.left-panel{width:270px;padding:18px;gap:22px}.right-panel{width:370px}
+.sec{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-size:10px;font-weight:750;letter-spacing:1.1px;color:#91a0b6;margin-bottom:10px}
+input[type=text],select,textarea{background:#09111f;border-color:#27354a;color:var(--text);border-radius:9px;padding:11px 12px;font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-size:12px}
+input[type=text]:focus,select:focus,textarea:focus{border-color:#7788ff;box-shadow:0 0 0 3px rgba(124,140,255,.1)}
+button{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-size:12px;font-weight:700;border-radius:9px;padding:10px 13px;letter-spacing:0;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.btn-p{background:linear-gradient(135deg,#7b8cff,#5969e8);box-shadow:0 5px 18px rgba(89,105,232,.18)}.btn-p:hover{box-shadow:0 7px 24px rgba(89,105,232,.3)}
+.btn-s{background:#172337;color:#dce6f7;border:1px solid #2b3a50}.btn-s:hover{background:#202f46}
+.btn-g{background:rgba(63,191,146,.12);color:#83e4bd;border:1px solid rgba(101,214,166,.28)}
+.btn-icon{width:15px;height:15px;stroke-width:2}
+.algo-btn{font-family:Inter,ui-sans-serif,system-ui,sans-serif;border-color:#27354a;background:#09111f;color:#9aa9bf;border-radius:8px;padding:9px 4px;font-size:10px;font-weight:700}
+.algo-btn.on{border-color:#7788ff;color:#b3bcff;background:rgba(124,140,255,.12)}
+.tabs{background:#0b1321;border-color:var(--border)}.tab{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-weight:700;letter-spacing:.5px;padding:13px 6px}.tab.on{color:#aeb8ff;border-bottom-color:#7c8cff}
+.rcard,.dcard,.ollama-status,.chat-a{background:#0a1220;border-color:#223047;border-radius:10px;padding:12px}
+.rcard:hover,.dcard:hover{border-color:#40517a}.dcard-title{color:#85dfba}.chat-q{border-radius:10px;background:rgba(124,140,255,.1);border-color:rgba(124,140,255,.24)}
+.chat-a-label{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-weight:800;letter-spacing:1px;color:#81dfb8}
+.del{display:inline-flex;align-items:center;justify-content:center;border-radius:7px;padding:4px 8px;width:auto}
+#vecCvs{border:1px solid #1d2a3d;border-radius:10px}
+#scatter{background:radial-gradient(ellipse at center,#0e1929 0%,#080d18 75%)}
+#tip{background:#101a2b;border-color:#2b3a50;border-radius:9px;box-shadow:0 12px 30px #0005}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#26344a;border-radius:8px}
+@media(max-width:1050px){.left-panel{width:235px}.right-panel{width:320px}}
+@media(max-width:780px){body{height:auto;min-height:100vh;overflow:auto}.layout{flex-direction:column;overflow:visible}.left-panel,.right-panel{width:100%;border:0;border-bottom:1px solid var(--border);overflow:visible}.center-panel{height:380px;min-height:320px}.right-panel{min-height:500px}.left-panel{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}header{flex-wrap:wrap}#statsLabel{margin-left:0;width:100%}}
+@media(max-width:480px){.left-panel{grid-template-columns:1fr}header{padding:12px 14px}header h1{width:100%}.center-panel{height:300px}}
+
 </style>
 </head>
 <body>
 
 <header>
-  <h1>Simran Patra</h1>
+  <h1>VectorDB Studio</h1>
   <span class="badge hl">HNSW</span>
   <span class="badge">KD-TREE</span>
   <span class="badge">BRUTE FORCE</span>
@@ -176,7 +211,7 @@ button {
       <div class="sec">Query (Demo Vectors)</div>
       <div style="display:flex;flex-direction:column;gap:6px">
         <input type="text" id="qInput" placeholder="binary tree, sushi, basketball…" />
-        <button class="btn-p" onclick="runSearch()">⚡ SEARCH</button>
+        <button class="btn-p" onclick="runSearch()"><i data-lucide="search" class="btn-icon"></i> SEARCH</button>
       </div>
     </div>
     <div>
@@ -225,7 +260,7 @@ button {
     </div>
     <div>
       <div class="sec">Benchmark</div>
-      <button class="btn-s" onclick="runBenchmark()">▶ COMPARE ALL ALGOS</button>
+      <button class="btn-s" onclick="runBenchmark()"><i data-lucide="chart-no-axes-combined" class="btn-icon"></i> COMPARE ALL ALGORITHMS</button>
     </div>
   </div>
 
@@ -280,7 +315,7 @@ button {
         <div style="display:flex;flex-direction:column;gap:8px">
           <input type="text" id="docTitle" placeholder="Document title / topic…" />
           <textarea id="docText" placeholder="Paste your notes, textbook excerpt, lecture content…&#10;&#10;Long text is automatically split into overlapping chunks and each chunk gets its own real embedding via Ollama's nomic-embed-text model."></textarea>
-          <button class="btn-g" id="insertDocBtn" onclick="insertDocument()">⚡ EMBED &amp; INSERT</button>
+          <button class="btn-g" id="insertDocBtn" onclick="insertDocument()"><i data-lucide="file-up" class="btn-icon"></i> EMBED &amp; INSERT</button>
           <div id="insertStatus" style="font-size:11px;color:var(--muted)"></div>
         </div>
       </div>
@@ -304,7 +339,7 @@ button {
               <option value="3" selected>Top 3</option>
               <option value="5">Top 5</option>
             </select>
-            <button class="btn-g" id="askBtn" onclick="askAI()" style="flex:1">🤖 ASK AI</button>
+            <button class="btn-g" id="askBtn" onclick="askAI()" style="flex:1"><i data-lucide="message-square" class="btn-icon"></i> ASK AI</button>
           </div>
           <div style="font-size:10px;color:var(--muted)">Uses your inserted documents as context. Answers come from the local LLM.</div>
         </div>
@@ -322,7 +357,9 @@ button {
 
 <div id="tip"></div>
 
+<script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
 <script>
+lucide.createIcons();
 // ════════════════════════════════════════════════════════════
 //  CONSTANTS
 // ════════════════════════════════════════════════════════════
@@ -697,7 +734,7 @@ async function insertDocument() {
   } catch(_) {
     status.innerHTML='<span style="color:var(--red)">✗ Server error</span>';
   }
-  btn.disabled=false; btn.textContent='⚡ EMBED & INSERT';
+  btn.disabled=false; btn.innerHTML='<i data-lucide="file-up" class="btn-icon"></i> EMBED & INSERT'; lucide.createIcons();
 }
 
 async function loadDocList() {
@@ -802,7 +839,7 @@ async function askAI() {
       aDiv.innerHTML=`<div class="chat-a-label">ERROR</div><div class="chat-a-text" style="color:var(--red)">${d.error}</div>`;
       history.appendChild(aDiv);
     } else {
-      aDiv.innerHTML=`<div class="chat-a-label">🤖 ${d.model||'llm'}</div>`+
+      aDiv.innerHTML=`<div class="chat-a-label">${d.model||'llm'}</div>`+
         `<div class="chat-a-text" id="typeTarget"></div>`+
         `<div class="chat-ctx">`+
           `<div class="chat-ctx-label">RETRIEVED CONTEXT (${d.contexts.length} chunks)</div>`+
@@ -829,7 +866,7 @@ async function askAI() {
   }
 
   document.getElementById('ragQuestion').value='';
-  btn.disabled=false; btn.textContent='🤖 ASK AI';
+  btn.disabled=false; btn.innerHTML='<i data-lucide="message-square" class="btn-icon"></i> ASK AI'; lucide.createIcons();
   history.scrollTop=history.scrollHeight;
 }
 
