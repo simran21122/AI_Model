@@ -3,7 +3,7 @@
 A fully working **vector database** written from scratch in Python (Flask + NumPy), with a single-file web UI.
 It implements three nearest-neighbour search algorithms — **HNSW**, **KD-Tree** and **Brute Force** — three distance
 metrics, a **PCA scatter-plot visualizer**, and a complete **RAG (Retrieval-Augmented Generation)** pipeline that works
-with either the **Google Gemini API** (free tier, works on cloud hosts) or a **local Ollama** install (works offline on a laptop).
+with either the **Google Gemini API** (free tier) or a **local Ollama** install (works offline on a laptop).
 
 > An educational project that shows how production vector databases such as Pinecone, Weaviate, Chroma and Milvus work under the hood.
 
@@ -25,12 +25,11 @@ with either the **Google Gemini API** (free tier, works on cloud hosts) or a **l
 10. [REST API Reference](#10-rest-api-reference)
 11. [Architecture Deep Dive](#11-architecture-deep-dive)
 12. [Algorithm Deep Dive](#12-algorithm-deep-dive)
-13. [Deploying to the Cloud (Render)](#13-deploying-to-the-cloud-render)
-14. [Security & Safety Notes](#14-security--safety-notes)
-15. [Limitations & Design Trade-offs](#15-limitations--design-trade-offs)
-16. [Troubleshooting](#16-troubleshooting)
-17. [Ideas for Extending the Project](#17-ideas-for-extending-the-project)
-18. [License](#18-license)
+13. [Security & Safety Notes](#13-security--safety-notes)
+14. [Limitations & Design Trade-offs](#14-limitations--design-trade-offs)
+15. [Troubleshooting](#15-troubleshooting)
+16. [Ideas for Extending the Project](#16-ideas-for-extending-the-project)
+17. [License](#17-license)
 
 ---
 
@@ -177,13 +176,13 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Installs **Flask** (HTTP server), **NumPy** (vector maths), **Requests** (talks to Gemini/Ollama) and **Gunicorn** (production
-server, used only for deployment). Takes ~30 seconds, no compile step.
+Installs **Flask** (HTTP server), **NumPy** (vector maths), **Requests** (talks to Gemini/Ollama) and **Gunicorn** (optional production
+WSGI server). Takes ~30 seconds, no compile step.
 If `pip` is not found, use `python -m pip install -r requirements.txt`.
 
 ### 5.4 Configure an AI provider
 
-**Option A — Gemini (recommended; also what you need for cloud hosting)**
+**Option A — Gemini (easiest, needs only an API key)**
 
 Create a file named `.env` next to `main.py`:
 
@@ -230,7 +229,7 @@ Open **<http://localhost:8080>** in your browser.
 ## 6. Configuration (Environment Variables)
 
 Variables are read from the real environment **and** from a local `.env` file. The built-in `.env` loader only sets a
-variable if it is **not already set**, so real environment variables (e.g. on Render) always win. Quotes around values are stripped; lines starting with `#` are ignored.
+variable if it is **not already set**, so real environment variables always win. Quotes around values are stripped; lines starting with `#` are ignored.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -239,14 +238,14 @@ variable if it is **not already set**, so real environment variables (e.g. on Re
 | `EMBED_MODEL` | `gemini-embedding-001` (Gemini) / `nomic-embed-text` (Ollama) | Embedding model |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Where the Ollama server listens |
 | `GEMINI_BASE` | `https://generativelanguage.googleapis.com/v1beta/models` | Gemini REST base URL |
-| `PORT` | `8080` | HTTP port (cloud hosts inject this automatically) |
+| `PORT` | `8080` | HTTP port the server listens on |
 | `READ_ONLY` | `0` | `1` = visitors cannot insert or delete anything (public-demo mode) |
 | `RATE_LIMIT_PER_MIN` | `30` | Max AI-backed requests per IP per minute |
 
 Hard-coded limits in `main.py`: 16 demo dimensions, `MAX_CHUNKS_PER_INSERT = 40` (~9,000 words), request body ≤ 512 KB,
 question ≤ 2,000 characters, title ≤ 200 characters, document `k` clamped to 1–10.
 
-> **Never commit `.env`.** It is listed in `.gitignore`. On a cloud host, enter these values in the host's *Environment* tab instead.
+> **Never commit `.env`.** It is listed in `.gitignore`.
 
 ---
 
@@ -255,7 +254,6 @@ question ≤ 2,000 characters, title ≤ 200 characters, document `k` clamped to
 | | **Gemini** | **Ollama** |
 |---|---|---|
 | Setup | API key only | Install app + pull ~2.3 GB of models |
-| Works on cloud hosts (Render, etc.) | Yes | No — needs a machine running Ollama |
 | Needs internet | Yes | No |
 | Cost | Free tier (rate-limited) | Free (your hardware) |
 | Embedding dimensions | 768 (requested via `outputDimensionality` to save RAM) | 768 (`nomic-embed-text`) |
@@ -318,9 +316,9 @@ itself as an AI assistant that answers questions about the user's documents.
 ## 9. Permanent Knowledge Base (`knowledge/`)
 
 Drop `.txt` or `.md` files into the `knowledge/` folder and they are embedded **automatically every time the server starts** —
-so a freshly deployed server can answer questions immediately, even though document storage is in-memory.
+so the server can answer questions immediately after a restart, even though document storage is in-memory.
 
-* Runs in a **background thread**, so the web server is up instantly (also under Gunicorn).
+* Runs in a **background thread**, so the web server is up instantly.
 * The chunk title is the filename with `_` and `-` turned into spaces (`vector-databases-intro.txt` → `vector databases intro`).
 * With Gemini, a **0.7 s pause** between chunks keeps you under the free-tier requests-per-minute limit.
 * If the provider is unavailable or an embedding fails, ingestion stops and prints a `[knowledge]` message to the console.
@@ -452,7 +450,7 @@ curl.exe -X POST http://localhost:8080/doc/ask -H "Content-Type: application/jso
 
 Flask runs with `threaded=True`. Each database owns a `threading.Lock`, so inserts, deletes and searches are serialised per database.
 The rate limiter and query cache have their own locks. This is safe **within one process**; see
-[Limitations](#15-limitations--design-trade-offs) for the multi-worker caveat.
+[Limitations](#14-limitations--design-trade-offs) for the multi-worker caveat.
 
 ### 11.3 Rate limiting
 
@@ -513,46 +511,19 @@ distance, so querying it with another metric works but is less principled than q
 
 ---
 
-## 13. Deploying to the Cloud (Render)
-
-The project is ready for any Python host that provides `$PORT` (Render, Railway, Fly.io, Heroku-style platforms). Ollama cannot run on
-free cloud tiers, so **use Gemini** there.
-
-1. Push the repo to GitHub (make sure `.env` is **not** committed).
-2. On Render create a **Web Service** from the repo.
-3. **Build command:** `pip install -r requirements.txt`
-4. **Start command:**
-   ```bash
-   gunicorn main:app --workers 1 --threads 4 --bind 0.0.0.0:$PORT --timeout 120
-   ```
-5. In the **Environment** tab add:
-   * `GEMINI_API_KEY` = your key
-   * `READ_ONLY` = `1` *(recommended for a public demo)*
-   * `RATE_LIMIT_PER_MIN` = `30` *(or lower)*
-6. Deploy and open the service URL.
-
-**Why `--workers 1`?** All data lives in process memory. With several Gunicorn workers each worker would hold its own separate
-copy of the database (and its own knowledge-ingestion thread and API calls), so inserts would appear and vanish at random.
-Scale with `--threads`, not `--workers`.
-
-**Cold starts:** free instances sleep when idle. On wake-up the server restarts, in-memory documents are lost, and `knowledge/` is
-re-embedded in the background (a few seconds per chunk on the Gemini free tier).
-
----
-
-## 14. Security & Safety Notes
+## 13. Security & Safety Notes
 
 * **Keep your API key secret.** `.env` is in `.gitignore`, but it is easy to leak it by zipping the project folder or sharing a screenshot. If a key ever leaves your machine, **revoke it and create a new one** in Google AI Studio.
-* **Public demos:** set `READ_ONLY=1` so strangers cannot add or delete data, and keep `RATE_LIMIT_PER_MIN` low so nobody can burn your free quota.
-* **Rate limiting trusts `X-Forwarded-For`.** That is correct behind a proxy such as Render's, but a client can spoof the header if the app is exposed directly to the internet. Do not rely on it as real abuse protection.
+* **Sharing the app:** set `READ_ONLY=1` so strangers cannot add or delete data, and keep `RATE_LIMIT_PER_MIN` low so nobody can burn your free quota.
+* **Rate limiting trusts `X-Forwarded-For`.** That is correct behind a trusted proxy, but a client can spoof the header if the app is exposed directly to the internet. Do not rely on it as real abuse protection.
 * **No authentication, no HTTPS in the app itself, wide-open CORS.** Fine for a local or demo project; put it behind a gateway and add auth before anything serious.
 * **Prompt injection:** retrieved text is pasted straight into the LLM prompt. In a multi-user setting, treat user-supplied documents as untrusted.
 * **Your documents are sent to the provider** (Google) when using Gemini. Use Ollama if the text is private.
-* `app.run(...)` is Flask's development server — use Gunicorn for anything public.
+* `app.run(...)` is Flask's development server — fine locally, not meant for public use.
 
 ---
 
-## 15. Limitations & Design Trade-offs
+## 14. Limitations & Design Trade-offs
 
 | Limitation | Detail |
 |---|---|
@@ -569,7 +540,7 @@ re-embedded in the background (a few seconds per chunk on the Gemini free tier).
 
 ---
 
-## 16. Troubleshooting
+## 15. Troubleshooting
 
 | Problem | Fix |
 |---|---|
@@ -591,7 +562,7 @@ re-embedded in the background (a few seconds per chunk on the Gemini free tier).
 
 ---
 
-## 17. Ideas for Extending the Project
+## 16. Ideas for Extending the Project
 
 * **Persistence** — save/load the HNSW graph and chunk store to disk (`pickle`, SQLite, or `numpy.savez`).
 * **File upload** — accept PDFs/DOCX in the Documents tab and extract text server-side.
@@ -606,7 +577,7 @@ re-embedded in the background (a few seconds per chunk on the Gemini free tier).
 
 ---
 
-## 18. License
+## 17. License
 
 Released under the **MIT License** — Copyright © 2026 D Simran Patra. See [`LICENSE`](LICENSE) for the full text.
 
