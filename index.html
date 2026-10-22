@@ -363,6 +363,7 @@ lucide.createIcons();
 // ════════════════════════════════════════════════════════════
 //  CONSTANTS
 // ════════════════════════════════════════════════════════════
+function esc(x){return String(x==null?'':x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 const API  = location.origin;   // same origin as the Python server
 const DIMS = 16;
 const COL  = { cs:'#00d9ff', math:'#b388ff', food:'#ffb74d', sports:'#69f0ae', doc:'#a6e3a1', default:'#90a4ae' };
@@ -533,7 +534,7 @@ sc.addEventListener('mousemove', e => {
   if (hoverItem) {
     const col=COL[hoverItem.category]||COL.default;
     tip.style.display='block';tip.style.left=(e.clientX+14)+'px';tip.style.top=(e.clientY-8)+'px';
-    tip.innerHTML=`<span style="color:${col}">[${hoverItem.category}]</span><br>${hoverItem.metadata}`;
+    tip.innerHTML=`<span style="color:${col}">[${hoverItem.category}]</span><br>${esc(hoverItem.metadata)}`;
   } else tip.style.display='none';
 });
 sc.addEventListener('mouseleave',()=>{hoverItem=null;document.getElementById('tip').style.display='none';});
@@ -596,7 +597,7 @@ function renderResults(results) {
     const col=COL[r.category]||COL.default;
     return `<div class="rcard" onmouseenter="hoverItem={id:${r.id}}" onmouseleave="hoverItem=null">
       <div class="rrank">#${i+1} NEAREST</div>
-      <div class="rmeta">${r.metadata}</div>
+      <div class="rmeta">${esc(r.metadata)}</div>
       <div class="rfoot">
         <span class="rcat" style="background:${col}18;color:${col};border:1px solid ${col}44">${r.category.toUpperCase()}</span>
         <span class="rdist">dist: ${r.distance.toFixed(5)}</span>
@@ -680,15 +681,15 @@ async function checkOllamaStatus() {
     const badge=document.getElementById('ollamaBadge');
     const box=document.getElementById('ollamaStatus');
     if (d.ollamaAvailable) {
-      badge.className='badge ok'; badge.textContent='OLLAMA ✓';
+      badge.className='badge ok'; badge.textContent=(d.provider==='gemini'?'GEMINI ✓':'OLLAMA ✓');
       box.className='ollama-status ok';
       box.innerHTML=`<span style="color:var(--green)">● Online</span><br>`+
-        `Embed: <span style="color:var(--accent)">${d.embedModel}</span><br>`+
-        `Generate: <span style="color:var(--accent)">${d.genModel}</span><br>`+
+        `Embed: <span style="color:var(--accent)">${esc(d.embedModel)}</span><br>`+
+        `Generate: <span style="color:var(--accent)">${esc(d.genModel)}</span><br>`+
         `Dims: <span style="color:var(--muted)">${d.docDims||'(first insert sets this)'}</span><br>`+
         `Documents: <span style="color:var(--text)">${d.docCount}</span>`;
     } else {
-      badge.className='badge err'; badge.textContent='OLLAMA ✗';
+      badge.className='badge err'; badge.textContent=(d.provider==='gemini'?'GEMINI ✗':'OLLAMA ✗');
       box.className='ollama-status err';
       box.innerHTML=`<span style="color:var(--red)">● Offline</span><br><br>`+
         `To enable RAG features:<br>`+
@@ -707,7 +708,7 @@ async function insertDocument() {
   if(!title||!text){status.textContent='⚠ Need both a title and text.';return;}
 
   btn.disabled=true; btn.textContent='Embedding…';
-  status.innerHTML='<span style="color:var(--muted)">Calling Ollama nomic-embed-text…</span>';
+  status.innerHTML='<span style="color:var(--muted)">Creating embeddings…</span>';
 
   try {
     const r=await fetch(API+'/doc/insert',{
@@ -716,7 +717,7 @@ async function insertDocument() {
     });
     const d=await r.json();
     if (d.error) {
-      status.innerHTML=`<span style="color:var(--red)">✗ ${d.error}</span>`;
+      status.innerHTML=`<span style="color:var(--red)">✗ ${esc(d.error)}</span>`;
     } else {
       status.innerHTML=`<span style="color:var(--green)">✓ Inserted ${d.chunks} chunk(s) · ${d.dims}D embeddings</span>`;
       document.getElementById('docTitle').value='';
@@ -747,8 +748,8 @@ async function loadDocList() {
     }
     document.getElementById('docList').innerHTML=docs.map(d=>`
       <div class="dcard">
-        <div class="dcard-title">${d.title}</div>
-        <div class="dcard-preview">${d.preview}</div>
+        <div class="dcard-title">${esc(d.title)}</div>
+        <div class="dcard-preview">${esc(d.preview)}</div>
         <div class="dcard-foot">
           <span class="dcard-words">${d.words} words</span>
           <button class="del" onclick="deleteDoc(${d.id})">✕</button>
@@ -836,15 +837,15 @@ async function askAI() {
     const aDiv=document.createElement('div'); aDiv.className='chat-a';
 
     if (d.error) {
-      aDiv.innerHTML=`<div class="chat-a-label">ERROR</div><div class="chat-a-text" style="color:var(--red)">${d.error}</div>`;
+      aDiv.innerHTML=`<div class="chat-a-label">ERROR</div><div class="chat-a-text" style="color:var(--red)">${esc(d.error)}</div>`;
       history.appendChild(aDiv);
     } else {
-      aDiv.innerHTML=`<div class="chat-a-label">${d.model||'llm'}</div>`+
+      aDiv.innerHTML=`<div class="chat-a-label">${esc(d.model||'llm')}</div>`+
         `<div class="chat-a-text" id="typeTarget"></div>`+
         `<div class="chat-ctx">`+
           `<div class="chat-ctx-label">RETRIEVED CONTEXT (${d.contexts.length} chunks)</div>`+
-          d.contexts.map((c,i)=>`<span class="ctx-chip" onclick="toggleCtx(${i})">#${i+1} ${c.title} · ${c.distance.toFixed(3)}</span>`+
-            `<div class="ctx-expand" id="ctx-${i}">${c.text}</div>`).join('')+
+          d.contexts.map((c,i)=>`<span class="ctx-chip" onclick="toggleCtx(${i})">#${i+1} ${esc(c.title)} · ${c.distance.toFixed(3)}</span>`+
+            `<div class="ctx-expand" id="ctx-${i}">${esc(c.text)}</div>`).join('')+
         `</div>`;
       history.appendChild(aDiv);
 

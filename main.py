@@ -17,8 +17,20 @@ import numpy as np
 import requests
 from flask import Flask, Response, jsonify, request
 
+# load .env for local runs (no extra package needed)
+_env = Path(__file__).parent / ".env"
+if _env.exists():
+    for _line in _env.read_text(encoding="utf-8").splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _v = _line.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+
 DIMS = 16
-PORT = 8080
+PORT = int(os.environ.get("PORT", 8080))      # cloud hosts give you the port via $PORT
+READ_ONLY = os.environ.get("READ_ONLY", "0") == "1"   # 1 = visitors cannot add/delete data
+RATE_LIMIT = int(os.environ.get("RATE_LIMIT_PER_MIN", "30"))
+MAX_CHUNKS_PER_INSERT = 40
 BASE_DIR = Path(__file__).parent
 
 # =====================================================================
@@ -344,34 +356,109 @@ def chunk_text(text, chunk_words=250, overlap=30):
     return chunks
 
 # =====================================================================
-#  OLLAMA CLIENT
-#    ollama pull nomic-embed-text ; ollama pull llama3.2
+#  AI CLIENT  (embeddings + answer generation)
+#    - GEMINI_API_KEY set  -> Google Gemini API  (free tier, works on cloud hosts)
+#    - otherwise           -> local Ollama       (laptop only)
 # =====================================================================
 
-class OllamaClient:
-    def __init__(self, host="127.0.0.1", port=11434):
-        self.base = f"http://{host}:{port}"
-        self.embed_model = os.environ.get("EMBED_MODEL", "nomic-embed-text")
-        self.gen_model = os.environ.get("GEN_MODEL", "llama3.2")
+GEMINI_BASE = os.environ.get("GEMINI_BASE", "https://generativelanguage.googleapis.com/v1beta/models")
+EMBED_DIMS_GEMINI = 768   # gemini-embedding-001 can return 768 numbers (smaller = less RAM)
 
+class AIClient:
+    def __init__(self):
+        self.gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        self.provider = "gemini" if self.gemini_key else "ollama"
+        self.base = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+        if self.provider == "gemini":
+            self.embed_model = os.environ.get("EMBED_MODEL", "gemini-embedding-001")
+            self.gen_model = os.environ.get("GEN_MODEL", "gemini-flash-latest")
+        else:
+            self.embed_model = os.environ.get("EMBED_MODEL", "nomic-embed-text")
+            self.gen_model = os.environ.get("GEN_MODEL", "llama3.2")
+        self.last_error = ""
+        self._qcache = {}          # question -> embedding (/doc/search and /doc/ask embed the same text)
+        self._qlock = threading.Lock()
+
+    # ---------- availability ----------
     def is_available(self):
+        if self.provider == "gemini":
+            return True            # a key is configured; we don't spend quota just to ping
         try:
             return requests.get(self.base + "/api/tags", timeout=2).status_code == 200
         except requests.RequestException:
             return False
 
-    def embed(self, text):
-        """Returns [] if Ollama/model is unavailable."""
-        try:
-            r = requests.post(self.base + "/api/embeddings",
-                              json={"model": self.embed_model, "prompt": text}, timeout=60)
-            if r.status_code != 200:
-                return []
-            return r.json().get("embedding", [])
-        except requests.RequestException:
-            return []
+    def unavailable_msg(self):
+        if self.provider == "gemini":
+            return self.last_error or "Gemini API request failed"
+        return ("Ollama unavailable. Install from https://ollama.com then run: "
+                "ollama pull nomic-embed-text && ollama pull llama3.2")
 
+    # ---------- Gemini helper ----------
+    def _gemini_post(self, model, method, payload, timeout):
+        url = f"{GEMINI_BASE}/{model}:{method}"
+        headers = {"x-goog-api-key": self.gemini_key, "Content-Type": "application/json"}
+        for attempt in range(4):
+            try:
+                r = requests.post(url, headers=headers, json=payload, timeout=timeout)
+            except requests.RequestException as e:
+                self.last_error = f"Network error calling Gemini ({e.__class__.__name__})"
+                return None
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < 3:   # busy/rate limited: wait and retry
+                time.sleep(3 * (attempt + 1))
+                continue
+            if r.status_code != 200:
+                try:
+                    msg = r.json().get("error", {}).get("message", "")
+                except ValueError:
+                    msg = ""
+                self.last_error = f"Gemini API error {r.status_code}: {msg[:200]}"
+                return None
+            self.last_error = ""
+            return r.json()
+        return None
+
+    # ---------- embeddings ----------
+    def embed(self, text, query=False):
+        """Returns [] on failure (reason in self.last_error)."""
+        if query:
+            with self._qlock:
+                if text in self._qcache:
+                    return self._qcache[text]
+        if self.provider == "gemini":
+            data = self._gemini_post(self.embed_model, "embedContent", {
+                "model": f"models/{self.embed_model}",
+                "content": {"parts": [{"text": text}]},
+                "taskType": "RETRIEVAL_QUERY" if query else "RETRIEVAL_DOCUMENT",
+                "outputDimensionality": EMBED_DIMS_GEMINI,
+            }, timeout=30)
+            vec = (data or {}).get("embedding", {}).get("values", [])
+        else:
+            try:
+                r = requests.post(self.base + "/api/embeddings",
+                                  json={"model": self.embed_model, "prompt": text}, timeout=60)
+                vec = r.json().get("embedding", []) if r.status_code == 200 else []
+            except (requests.RequestException, ValueError):
+                vec = []
+        if query and vec:
+            with self._qlock:
+                if len(self._qcache) > 256:
+                    self._qcache.clear()
+                self._qcache[text] = vec
+        return vec
+
+    # ---------- generation ----------
     def generate(self, prompt):
+        if self.provider == "gemini":
+            data = self._gemini_post(self.gen_model, "generateContent",
+                                     {"contents": [{"parts": [{"text": prompt}]}]}, timeout=90)
+            if not data:
+                return "ERROR: " + self.last_error
+            try:
+                parts = data["candidates"][0]["content"]["parts"]
+                return "".join(p.get("text", "") for p in parts).strip() or "ERROR: empty answer from Gemini"
+            except (KeyError, IndexError, TypeError):
+                return "ERROR: Gemini returned no answer (possibly blocked by a safety filter)"
         try:
             r = requests.post(self.base + "/api/generate",
                               json={"model": self.gen_model, "prompt": prompt, "stream": False},
@@ -480,8 +567,9 @@ def load_demo(db):
 app = Flask(__name__)
 db = VectorDB(DIMS)
 doc_db = DocumentDB()
-ollama = OllamaClient()
+ai = AIClient()
 load_demo(db)
+app.config["MAX_CONTENT_LENGTH"] = 512 * 1024   # reject giant uploads
 
 @app.after_request
 def add_cors(resp):
@@ -493,6 +581,35 @@ def add_cors(resp):
 @app.route("/<path:_>", methods=["OPTIONS"])
 def preflight(_):
     return Response(status=204)
+
+_rate, _rate_lock = {}, threading.Lock()
+
+def rate_ok():
+    """Tiny per-IP limiter so strangers can't burn your free API quota."""
+    ip = (request.headers.get("X-Forwarded-For") or request.remote_addr or "?").split(",")[0].strip()
+    now = time.time()
+    with _rate_lock:
+        hits = [t for t in _rate.get(ip, []) if now - t < 60]
+        if len(hits) >= RATE_LIMIT:
+            _rate[ip] = hits
+            return False
+        hits.append(now)
+        _rate[ip] = hits
+        if len(_rate) > 5000:
+            _rate.clear()
+    return True
+
+def too_many():
+    return jsonify(error="Too many requests - please wait a minute and try again."), 429
+
+def read_only_block():
+    return jsonify(error="This demo is read-only: visitors cannot add or delete data."), 403
+
+def safe_k(b, default=3):
+    try:
+        return max(1, min(10, int(b.get("k", default))))
+    except (TypeError, ValueError):
+        return default
 
 def parse_vec(s):
     out = []
@@ -528,6 +645,8 @@ def search():
 
 @app.post("/insert")
 def insert():
+    if READ_ONLY:
+        return read_only_block()
     b = request.get_json(silent=True) or {}
     meta, cat, emb = b.get("metadata", ""), b.get("category", ""), b.get("embedding", [])
     if not meta or len(emb) != DIMS:
@@ -536,6 +655,8 @@ def insert():
 
 @app.delete("/delete/<int:id_>")
 def delete(id_):
+    if READ_ONLY:
+        return read_only_block()
     return jsonify(ok=db.remove(id_))
 
 @app.get("/items")
@@ -558,23 +679,30 @@ def hnsw_info():
 
 @app.post("/doc/insert")
 def doc_insert():
+    if READ_ONLY:
+        return read_only_block()
+    if not rate_ok():
+        return too_many()
     b = request.get_json(silent=True) or {}
-    title, text = b.get("title", ""), b.get("text", "")
+    title, text = str(b.get("title", ""))[:200], str(b.get("text", ""))
     if not title or not text:
         return jsonify(error="need title and text")
     chunks = chunk_text(text)
+    if len(chunks) > MAX_CHUNKS_PER_INSERT:
+        return jsonify(error=f"Text too long ({len(chunks)} chunks). Max {MAX_CHUNKS_PER_INSERT} chunks (~9,000 words) per insert.")
     ids = []
     for i, ch in enumerate(chunks):
-        emb = ollama.embed(ch)
+        emb = ai.embed(ch)
         if not emb:
-            return jsonify(error="Ollama unavailable. Install from https://ollama.com then run: "
-                                 "ollama pull nomic-embed-text && ollama pull llama3.2")
+            return jsonify(error=ai.unavailable_msg())
         name = f"{title} [{i+1}/{len(chunks)}]" if len(chunks) > 1 else title
         ids.append(doc_db.insert(name, ch, emb))
     return jsonify(ids=ids, chunks=len(chunks), dims=doc_db.dims)
 
 @app.delete("/doc/delete/<int:id_>")
 def doc_delete(id_):
+    if READ_ONLY:
+        return read_only_block()
     return jsonify(ok=doc_db.remove(id_))
 
 @app.get("/doc/list")
@@ -589,12 +717,14 @@ def doc_list():
 @app.post("/doc/search")
 def doc_search():
     b = request.get_json(silent=True) or {}
-    question, k = b.get("question", ""), int(b.get("k", 3))
+    question, k = str(b.get("question", ""))[:2000], safe_k(b)
     if not question:
         return jsonify(error="need question")
-    q = ollama.embed(question)
+    if not rate_ok():
+        return too_many()
+    q = ai.embed(question, query=True)
     if not q:
-        return jsonify(error="Ollama unavailable")
+        return jsonify(error=ai.unavailable_msg())
     hits = doc_db.search(q, k)
     return jsonify(contexts=[{"id": d.id, "title": d.title, "distance": round(dist, 4)}
                              for dist, d in hits])
@@ -602,34 +732,39 @@ def doc_search():
 @app.post("/doc/ask")
 def doc_ask():
     b = request.get_json(silent=True) or {}
-    question, k = b.get("question", ""), int(b.get("k", 3))
+    question, k = str(b.get("question", ""))[:2000], safe_k(b)
     if not question:
         return jsonify(error="need question")
+    if not rate_ok():
+        return too_many()
 
-    q = ollama.embed(question)                       # 1. embed question
+    q = ai.embed(question, query=True)               # 1. embed question
     if not q:
-        return jsonify(error="Ollama unavailable")
+        return jsonify(error=ai.unavailable_msg())
     hits = doc_db.search(q, k)                       # 2. retrieve
 
     ctx = "".join(f"[{i+1}] {d.title}:\n{d.text}\n\n" for i, (_, d) in enumerate(hits))
     prompt = (                                       # 3. build prompt
-        "You are a helpful assistant. Answer the user's question directly. "
-        "Use the provided context if it contains relevant information. "
-        "If it doesn't, just use your own general knowledge. "
-        "IMPORTANT: Do NOT mention the 'context', 'provided text', or say things like "
-        "'the context doesn't mention'. Just answer the question naturally.\n\n"
+        "You are an AI assistant that answers questions using the documents provided below. "
+        "Use them when they are relevant. If they are not relevant, use your own general knowledge. "
+        "You are an AI assistant, not a person. If asked about yourself (your name, who you are), "
+        "say you are an AI assistant that answers questions about the user's documents. "
+        "IMPORTANT: Do NOT mention the 'context' or 'provided text', and do not say things like "
+        "'the context doesn't mention'. Just answer naturally.\n\n"
         f"Context:\n{ctx}Question: {question}\n\nAnswer:")
-    answer = ollama.generate(prompt)                 # 4. generate
+    answer = ai.generate(prompt)                     # 4. generate
+    if answer.startswith("ERROR:"):
+        return jsonify(error=answer[6:].strip())
 
-    return jsonify(answer=answer, model=ollama.gen_model,
+    return jsonify(answer=answer, model=ai.gen_model,
                    contexts=[{"id": d.id, "title": d.title, "text": d.text,
                               "distance": round(dist, 4)} for dist, d in hits],
                    docCount=doc_db.size())
 
 @app.get("/status")
 def status():
-    return jsonify(ollamaAvailable=ollama.is_available(),
-                   embedModel=ollama.embed_model, genModel=ollama.gen_model,
+    return jsonify(ollamaAvailable=ai.is_available(), provider=ai.provider, readOnly=READ_ONLY,
+                   embedModel=ai.embed_model, genModel=ai.gen_model,
                    docCount=doc_db.size(), docDims=doc_db.dims,
                    demoDims=DIMS, demoCount=db.size())
 
@@ -639,6 +774,37 @@ def stats():
                    algorithms=["bruteforce", "kdtree", "hnsw"],
                    metrics=["euclidean", "cosine", "manhattan"])
 
+# -- Permanent knowledge: every .txt/.md file in ./knowledge is embedded at startup --
+
+KNOWLEDGE_DIR = BASE_DIR / "knowledge"
+
+def ingest_knowledge():
+    files = (sorted(list(KNOWLEDGE_DIR.glob("*.txt")) + list(KNOWLEDGE_DIR.glob("*.md")))
+             if KNOWLEDGE_DIR.exists() else [])
+    if not files:
+        return
+    if not ai.is_available():
+        print("[knowledge] AI provider not available - skipping")
+        return
+    for f in files:
+        try:
+            chunks = chunk_text(f.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        for i, ch in enumerate(chunks):
+            emb = ai.embed(ch)
+            if not emb:
+                print(f"[knowledge] embedding failed on {f.name}: {ai.unavailable_msg()}")
+                return
+            name = f.stem.replace("_", " ").replace("-", " ")
+            doc_db.insert(f"{name} [{i+1}/{len(chunks)}]" if len(chunks) > 1 else name, ch, emb)
+            if ai.provider == "gemini":
+                time.sleep(0.7)          # stay under the free-tier requests-per-minute limit
+    print(f"[knowledge] loaded {doc_db.size()} chunks from {KNOWLEDGE_DIR.name}/")
+
+# runs in the background so the web server starts instantly (also under gunicorn)
+threading.Thread(target=ingest_knowledge, daemon=True).start()
+
 @app.get("/")
 def index():
     f = BASE_DIR / "index.html"
@@ -647,11 +813,11 @@ def index():
     return Response(f.read_text(encoding="utf-8"), mimetype="text/html")
 
 if __name__ == "__main__":
-    up = ollama.is_available()
+    up = ai.is_available()
     print("=== VectorDB Engine (Python) ===")
     print(f"http://localhost:{PORT}")
     print(f"{db.size()} demo vectors | {DIMS} dims | HNSW+KD-Tree+BruteForce")
-    print("Ollama:", "ONLINE" if up else "OFFLINE (install from ollama.com)")
+    print(f"AI provider: {ai.provider}", "- ONLINE" if up else "- OFFLINE (install Ollama or set GEMINI_API_KEY)")
     if up:
-        print(f"  embed model: {ollama.embed_model}  gen model: {ollama.gen_model}")
+        print(f"  embed model: {ai.embed_model}  gen model: {ai.gen_model}")
     app.run(host="0.0.0.0", port=PORT, threaded=True)

@@ -1,0 +1,7 @@
+A vector database stores data as lists of numbers called embeddings. An embedding model turns a piece of text into a vector so that texts with similar meaning end up close together in space. To search, the question is also turned into a vector and the database returns the stored vectors that are nearest to it.
+
+HNSW stands for Hierarchical Navigable Small World. It is a graph based index with several layers. The top layers are sparse and let a search jump quickly to the right neighbourhood, and the bottom layer contains every point and is used for the final precise search. HNSW is approximate but very fast, and it is used by many production vector databases.
+
+A KD-Tree splits space along one dimension at a time. It works well when vectors have few dimensions but becomes nearly as slow as brute force when vectors have hundreds of dimensions. Brute force compares the query with every stored vector, which is always exact but slow on large data.
+
+RAG means Retrieval Augmented Generation. The system retrieves the most relevant chunks of your documents using vector search and gives them to a language model, which writes an answer based on those chunks.
